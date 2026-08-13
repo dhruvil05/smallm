@@ -1,6 +1,6 @@
 import { ModelQuery, ModelMatch } from "./types";
 import { validateQuery } from "./query";
-import { fetchCandidateModelsCached } from "./cache";
+import { fetchCandidateModelsCached, configureCandidateModelsCache } from "./cache-file";
 import { enrichWithParams } from "./params";
 import { applyHardFilters } from "./filters";
 import { scoreModel, generateReasonWhy, compareModels } from "./scorer";
@@ -9,25 +9,36 @@ import { mapTaskToPipelineTag } from "./registry/huggingface";
 /**
  * Finds and ranks HuggingFace models matching the given query.
  *
- * Pipeline (locked order, per MVP guide Section 5, Step 8):
+ * Pipeline (locked order, per MVP guide Section 5, Step 8 — unchanged in v0.2):
  *   validate -> fetch -> hard-filter -> score -> tie-break -> sort -> limit -> return
  *
- * Known MVP limitation: candidate models come only from HuggingFace's list
- * endpoint (registry/huggingface.ts), which does not return context-window
- * data. That means `contextWindow` is always null/unknown for every model
- * in this pipeline, so the contextLength hard filter rarely excludes
- * anything and the context-fit score component is always neutral (50).
- * Per Section 6.3's guidance ("fetch full model detail only for shortlisted
- * top candidates"), a real fix would add a detail-fetch enrichment step for
- * the top N *after* scoring — but that's not part of the fixed Step 8
- * pipeline order, so it's deliberately left out of MVP and flagged here
- * rather than silently built.
+ * v0.2 changes (see post-MVP guide):
+ *   - fetch is now backed by a file-based cache (cache-file.ts) instead of
+ *     MVP's in-memory Map, so repeated queries survive process restarts.
+ *     Same call-site shape, so this swap didn't touch the pipeline order.
+ *   - maxLatencyMs is now a real hard filter when both it and `hardware`
+ *     are provided AND a benchmark entry exists for that (model, hardware)
+ *     pair (see filters.ts, benchmark.ts). Still unenforced when no
+ *     benchmark data is available — unknown values are never punished.
+ *   - HuggingFace fetch failures now retry transient errors (429/5xx) with
+ *     backoff before throwing a typed SmallmError subclass (errors.ts).
+ *
+ * Known MVP-era limitation, still present in v0.2: candidate models come
+ * only from HuggingFace's list endpoint, which does not return
+ * context-window data, so `contextWindow` stays null/unknown for every
+ * model and the context-fit score component stays neutral (50). Not part
+ * of v0.2's scope (see post-MVP guide) — tracked as a future addition.
  */
 export async function findModels(query: ModelQuery): Promise<ModelMatch[]> {
   // 1. validate
   const validated = validateQuery(query);
 
-  // 2. fetch (cached)
+  // (v0.2) apply per-call cache options, if provided, before the fetch step.
+  if (validated.cacheOptions) {
+    configureCandidateModelsCache(validated.cacheOptions);
+  }
+
+  // 2. fetch (cached — now file-backed, see cache-file.ts)
   const rawCandidates = await fetchCandidateModelsCached(validated.task);
   const enriched = enrichWithParams(rawCandidates);
 
@@ -67,3 +78,8 @@ export async function findModels(query: ModelQuery): Promise<ModelMatch[]> {
 // Internal helpers (fetch, scorer internals) and ParamsSource are
 // intentionally NOT exported from here, per docx Section 6.1/3.1.
 export type { ModelQuery, ModelMatch } from "./types";
+
+// (v0.2) Public error exports — additive. Lets consumers do
+// `catch (e) { if (e instanceof ValidationError) ... }` without reaching
+// into internal modules.
+export { SmallmError, HFApiError, RateLimitError, ValidationError } from "./errors";

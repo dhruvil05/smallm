@@ -1,10 +1,12 @@
 import { HFModel, ModelQuery } from "./types";
 import { mapTaskToPipelineTag } from "./registry/huggingface";
+import { lookupLatencyMs } from "./benchmark";
 
 /**
- * Applies the three hard filters from Section 4.2, IN THIS ORDER, before any
- * scoring happens. A model failing ANY filter is excluded outright — it never
- * reaches scorer.ts. Unknown values never cause exclusion (Section 4.4).
+ * Applies hard filters before any scoring happens. A model failing ANY
+ * filter is excluded outright — it never reaches scorer.ts. Unknown values
+ * never cause exclusion (MVP Section 4.4's rule, carried forward per the
+ * v0.2 guide's "unknown data is never punished" cross-phase principle).
  */
 export function applyHardFilters(models: HFModel[], query: ModelQuery): HFModel[] {
   const expectedPipelineTag = mapTaskToPipelineTag(query.task);
@@ -28,6 +30,16 @@ export function applyHardFilters(models: HFModel[], query: ModelQuery): HFModel[
     //    Missing pipeline_tag entirely is treated as "can't determine", not excluded.
     if (model.pipeline_tag && model.pipeline_tag !== expectedPipelineTag) {
       return false;
+    }
+
+    // 4. (v0.2) maxLatencyMs — only enforced when benchmark data exists AND
+    //    hardware is specified (latency is meaningless without a hardware
+    //    context). No benchmark entry => let through, same unknown-value rule.
+    if (query.maxLatencyMs !== undefined && query.hardware !== undefined) {
+      const measuredLatency = lookupLatencyMs(model.id, query.hardware);
+      if (measuredLatency !== null && measuredLatency > query.maxLatencyMs) {
+        return false;
+      }
     }
 
     return true;

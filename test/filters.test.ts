@@ -51,6 +51,47 @@ describe("applyHardFilters", () => {
     expect(result).toHaveLength(1);
   });
 
+  it("(v0.2) excludes a model whose benchmarked latency exceeds maxLatencyMs", () => {
+    const models = [model({ id: "meta-llama/Llama-3-8B-Instruct" })]; // cpu: 9800ms in dataset
+    const result = applyHardFilters(models, {
+      ...baseQuery,
+      hardware: "cpu",
+      maxLatencyMs: 2000,
+    });
+    expect(result).toHaveLength(0);
+  });
+
+  it("(v0.2) keeps a model whose benchmarked latency is within maxLatencyMs", () => {
+    const models = [model({ id: "meta-llama/Llama-3-8B-Instruct" })]; // gpu-high: 320ms
+    const result = applyHardFilters(models, {
+      ...baseQuery,
+      hardware: "gpu-high",
+      maxLatencyMs: 2000,
+    });
+    expect(result).toHaveLength(1);
+  });
+
+  it("(v0.2) does not exclude a model with no benchmark entry, even with maxLatencyMs set", () => {
+    const models = [model({ id: "some-org/unbenchmarked-model" })];
+    const result = applyHardFilters(models, {
+      ...baseQuery,
+      hardware: "cpu",
+      maxLatencyMs: 100,
+    });
+    expect(result).toHaveLength(1);
+  });
+
+  it("(v0.2) does not enforce maxLatencyMs at all when hardware isn't specified", () => {
+    // Can't judge latency without knowing which hardware bucket applies.
+    const models = [model({ id: "meta-llama/Llama-3-8B-Instruct" })]; // cpu would be 9800ms
+    const result = applyHardFilters(models, {
+      ...baseQuery,
+      maxLatencyMs: 100,
+      // no hardware specified
+    });
+    expect(result).toHaveLength(1);
+  });
+
   it("applies all three filters together", () => {
     const models = [
       model({ id: "keeper", paramsB: 6.5, contextWindow: 8192, pipeline_tag: "text-generation" }),

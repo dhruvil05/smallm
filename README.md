@@ -20,7 +20,8 @@ const results = await findModels({
   contextLength: 8192,    // required — hard filter, in tokens
   maxParamsB: 7,           // optional — hard filter, "under 7B"
   domain: "medical",       // optional — used in scoring only
-  hardware: "gpu-low",     // optional — informational, not enforced in MVP
+  hardware: "gpu-low",     // optional — required (along with maxLatencyMs) to enforce latency
+  maxLatencyMs: 2000,       // optional — v0.2: real hard filter when benchmark data exists
   limit: 5,                 // optional — defaults to 5
 });
 
@@ -38,11 +39,29 @@ console.log(results);
 // ]
 ```
 
+### Handling errors (v0.2)
+
+```ts
+import { findModels, ValidationError, RateLimitError, HFApiError } from "smallm";
+
+try {
+  await findModels({ task: "chat", contextLength: 4096 });
+} catch (err) {
+  if (err instanceof ValidationError) {
+    // your query was malformed — fix it, retrying won't help
+  } else if (err instanceof RateLimitError) {
+    // HuggingFace rate-limited us — smallm already retried 3x with backoff before this threw
+  } else if (err instanceof HFApiError) {
+    // some other non-2xx from HuggingFace
+  }
+}
+```
+
 ## API
 
 ### `findModels(query: ModelQuery): Promise<ModelMatch[]>`
 
-The single public entry point. Validates the query, fetches live candidates from HuggingFace, applies hard filters, scores and ranks the survivors, and returns the top N.
+The single public entry point. Validates the query, fetches live candidates from HuggingFace (cached, retrying transient failures), applies hard filters, scores and ranks the survivors, and returns the top N.
 
 ### `ModelQuery`
 
@@ -50,11 +69,12 @@ The single public entry point. Validates the query, fetches live candidates from
 |---|---|---|---|
 | `task` | `"summarize" \| "classify" \| "extract" \| "chat" \| "code" \| "translate" \| string` | yes | |
 | `contextLength` | `number` | yes | Hard filter (tokens) |
-| `hardware` | `"cpu" \| "gpu-low" \| "gpu-high"` | no | Informational only in MVP |
+| `hardware` | `"cpu" \| "gpu-low" \| "gpu-high"` | no | Required alongside `maxLatencyMs` to enforce latency filtering (v0.2) |
 | `domain` | `string` | no | Used in scoring, not filtering |
 | `maxParamsB` | `number` | no | Hard filter, e.g. `7` = "under 7B" |
-| `maxLatencyMs` | `number` | no | Reserved for v0.2+, accepted but not enforced |
+| `maxLatencyMs` | `number` | no | **v0.2:** real hard filter when a benchmark entry exists for the (model, `hardware`) pair. No entry = not enforced. |
 | `limit` | `number` | no | Defaults to `5` |
+| `cacheOptions` | `{ dir?: string; ttlMs?: number }` | no | **v0.2:** configure the file-based cache. Defaults: OS temp dir + `/smallm-cache`, 5-minute TTL |
 
 ### `ModelMatch`
 
@@ -67,23 +87,33 @@ The single public entry point. Validates the query, fetches live candidates from
 | `reasonWhy` | `string` | Generated from the scoring breakdown |
 | `score` | `number` | 0–100 |
 
+### Errors (v0.2)
+
+All thrown errors extend `SmallmError`:
+
+- `ValidationError` — bad `ModelQuery` input. Never retried.
+- `HFApiError` — non-2xx response from HuggingFace (base class; carries `.status`).
+- `RateLimitError` — `HFApiError` subclass specifically for HTTP 429.
+
+`findModels` retries transient HuggingFace failures (429 and any 5xx) up to 3 times with exponential backoff (500ms / 1000ms / 2000ms) before throwing.
+
 ## How scoring works
 
-Hard filters (`maxParamsB`, `contextLength`, `task`) run **before** any scoring — a model that fails a hard filter never gets scored. Survivors are scored on four weighted components:
+Hard filters (`maxParamsB`, `contextLength`, `task`, and — as of v0.2 — `maxLatencyMs`) run **before** any scoring — a model that fails a hard filter never gets scored. Survivors are scored on four weighted components:
 
 - **Task match** — 50%
 - **Context window fit** — 20%
 - **Size fit** — 15%
 - **Domain match** — 15%
 
-Unknown metadata (e.g. undetectable param count) is never punished or excluded — it gets a neutral mid-range score for that component only.
+Unknown metadata (e.g. undetectable param count, no benchmark entry) is never punished or excluded — it gets a neutral mid-range score for that component only, or is simply not filtered on.
 
-## Known limitations (MVP)
+## Known limitations
 
-- `contextWindow` is currently always `null` — HuggingFace's list endpoint doesn't return it, and the MVP pipeline doesn't do a per-model detail fetch. This means the context-length hard filter rarely excludes anything, and the context-fit score is always neutral. A future version can add a detail-fetch enrichment step for shortlisted candidates.
+- **Benchmark data is illustrative, not measured.** The shipped `src/data/benchmarks.json` contains a small set of placeholder latency numbers for demonstration and testing — not real measured inference latency. Replace it with genuinely benchmarked data before relying on `maxLatencyMs` exclusions in production.
+- `contextWindow` is currently always `null` — HuggingFace's list endpoint doesn't return it, and the pipeline doesn't do a per-model detail fetch. This means the context-length hard filter rarely excludes anything, and the context-fit score is always neutral. Tracked as a possible future addition.
 - Sub-billion-parameter models (e.g. `125M`) aren't detected by the size regex and report `paramsB: null`.
-- No retry/backoff — a failed HuggingFace API call throws directly.
-- In-memory cache only — cache is lost on process restart.
+- File-based cache only — no database engine. Cache entries are per-process-agnostic (survive restarts) but there's no cross-machine sharing.
 
 ## Development
 
@@ -92,3 +122,8 @@ npm install
 npm run build   # compile TypeScript -> dist/
 npm test         # run the unit + integration test suite
 ```
+
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md).
+

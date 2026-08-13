@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "modelId": "meta-llama/Llama-3-8B-Instruct",
+      "hardware": "gpu-low",
+      "avgLatencyMs": 850,
+      "measuredAt": "2026-08-01",
+      "promptTokens": 512,
+      "outputTokens": 256
+    },
+    {
+      "modelId": "meta-llama/Llama-3-8B-Instruct",
+      "hardware": "gpu-high",
+      "avgLatencyMs": 320,
+      "measuredAt": "2026-08-01",
+      "promptTokens": 512,
+      "outputTokens": 256
+    },
+    {
+      "modelId": "meta-llama/Llama-3-8B-Instruct",
+      "hardware": "cpu",
+      "avgLatencyMs": 9800,
+      "measuredAt": "2026-08-01",
+      "promptTokens": 512,
+      "outputTokens": 256
+    },
+    {
+      "modelId": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "hardware": "cpu",
+      "avgLatencyMs": 1400,
+      "measuredAt": "2026-08-01",
+      "promptTokens": 512,
+      "outputTokens": 256
+    },
+    {
+      "modelId": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "hardware": "gpu-low",
+      "avgLatencyMs": 180,
+      "measuredAt": "2026-08-01",
+      "promptTokens": 512,
+      "outputTokens": 256
+    },
+    {
+      "modelId": "mistralai/Mistral-7B-Instruct-v0.3",
+      "hardware": "gpu-low",
+      "avgLatencyMs": 790,
+      "measuredAt": "2026-08-01",
+      "promptTokens": 512,
+      "outputTokens": 256
+    },
+    {
+      "modelId": "mistralai/Mistral-7B-Instruct-v0.3",
+      "hardware": "gpu-high",
+      "avgLatencyMs": 290,
+      "measuredAt": "2026-08-01",
+      "promptTokens": 512,
+      "outputTokens": 256
+    }
+  ]
+}

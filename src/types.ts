@@ -29,6 +29,12 @@ export interface ModelQuery {
 
   /** Max number of results returned. Defaults to 5 if omitted. */
   limit?: number;
+
+  /**
+   * v0.2 addition, optional. Configures the file-based cache
+   * (directory + TTL). Additive — omitting it preserves v0.1 defaults.
+   */
+  cacheOptions?: CacheOptions;
 }
 
 /** A single scored model returned to the caller. */
@@ -73,3 +79,28 @@ export interface HFModel {
  * on ModelMatch.
  */
 export type ParamsSource = "id" | "tag" | "config" | "unknown";
+
+// ---- v0.2 additions (additive only — see post-MVP guide) ----
+
+/**
+ * A single measured-latency data point for a (model, hardware) pair.
+ * Shipped as a checked-in, versioned JSON dataset — not measured live.
+ */
+export interface BenchmarkEntry {
+  modelId: string;
+  hardware: "cpu" | "gpu-low" | "gpu-high";
+  avgLatencyMs: number;
+  /** ISO date string — benchmark data goes stale, so track when it was taken. */
+  measuredAt: string;
+  /** Conditions the measurement was taken under. */
+  promptTokens: number;
+  outputTokens: number;
+}
+
+/** Options for the v0.2 file-based cache. */
+export interface CacheOptions {
+  /** Default: OS temp dir + '/smallm-cache' */
+  dir?: string;
+  /** Default: same TTL as MVP's in-memory cache (5 minutes). */
+  ttlMs?: number;
+}
