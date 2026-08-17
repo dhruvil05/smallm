@@ -1,8 +1,10 @@
-import { ModelQuery } from "./types";
+import { ModelQuery, ScoringMode } from "./types";
 import { ValidationError } from "./errors";
 
 const VALID_HARDWARE = new Set(["cpu", "gpu-low", "gpu-high"]);
+const VALID_SCORING_MODES = new Set(["rule", "embedding", "hybrid"]);
 const DEFAULT_LIMIT = 5;
+const DEFAULT_SCORING_MODE = "rule";
 
 /**
  * Backward-compatible alias. As of v0.2, query validation throws the typed
@@ -16,7 +18,7 @@ export { ValidationError as InvalidQueryError };
  * Validates a raw ModelQuery and returns a normalized copy
  * (limit defaulted to 5 if omitted). Throws InvalidQueryError on bad input.
  */
-export function validateQuery(query: ModelQuery): ModelQuery & { limit: number } {
+export function validateQuery(query: ModelQuery): ModelQuery & { limit: number; scoringMode: ScoringMode } {
   if (!query || typeof query !== "object") {
     throw new ValidationError("query must be an object");
   }
@@ -49,8 +51,13 @@ export function validateQuery(query: ModelQuery): ModelQuery & { limit: number }
     throw new ValidationError("query.limit must be a positive integer when provided");
   }
 
+  if (query.scoringMode !== undefined && !VALID_SCORING_MODES.has(query.scoringMode)) {
+    throw new ValidationError(`query.scoringMode must be one of: ${[...VALID_SCORING_MODES].join(", ")}`);
+  }
+
   return {
     ...query,
     limit: query.limit ?? DEFAULT_LIMIT,
+    scoringMode: query.scoringMode ?? DEFAULT_SCORING_MODE,
   };
 }

@@ -56,4 +56,20 @@ describe("validateQuery", () => {
   it("throws on non-positive maxLatencyMs even though it's unenforced downstream", () => {
     expect(() => validateQuery({ ...baseQuery, maxLatencyMs: -100 })).toThrow(InvalidQueryError);
   });
+
+  it("(v0.3) defaults scoringMode to 'rule' when omitted", () => {
+    const result = validateQuery(baseQuery);
+    expect(result.scoringMode).toBe("rule");
+  });
+
+  it("(v0.3) accepts valid scoringMode values", () => {
+    expect(validateQuery({ ...baseQuery, scoringMode: "embedding" }).scoringMode).toBe("embedding");
+    expect(validateQuery({ ...baseQuery, scoringMode: "hybrid" }).scoringMode).toBe("hybrid");
+    expect(validateQuery({ ...baseQuery, scoringMode: "rule" }).scoringMode).toBe("rule");
+  });
+
+  it("(v0.3) throws on an invalid scoringMode value", () => {
+    // @ts-expect-error testing runtime validation
+    expect(() => validateQuery({ ...baseQuery, scoringMode: "vibes" })).toThrow(InvalidQueryError);
+  });
 });

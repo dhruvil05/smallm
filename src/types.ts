@@ -35,7 +35,19 @@ export interface ModelQuery {
    * (directory + TTL). Additive — omitting it preserves v0.1 defaults.
    */
   cacheOptions?: CacheOptions;
+
+  /**
+   * v0.3 addition, optional. "rule" (default, v0.1/v0.2 behavior) uses only
+   * the weighted rule-based scorer. "embedding" scores purely on text
+   * similarity between `task` and each candidate's available text signals.
+   * "hybrid" blends both per the locked 60/40 formula (see scorer.ts).
+   * Additive — omitting it preserves prior-version behavior exactly.
+   */
+  scoringMode?: ScoringMode;
 }
+
+/** v0.3: which scoring strategy to use. */
+export type ScoringMode = "rule" | "embedding" | "hybrid";
 
 /** A single scored model returned to the caller. */
 export interface ModelMatch {
@@ -49,6 +61,15 @@ export interface ModelMatch {
   reasonWhy: string;
   /** 0–100 */
   score: number;
+
+  /**
+   * v0.3 addition, optional. Which scoring mode actually produced this
+   * result's score — useful when a caller wants to confirm which strategy
+   * ran. Always populated in practice by findModels(), but kept optional
+   * on the type per the locked v0.3 contract (so a hand-constructed
+   * ModelMatch from older code, e.g. in a mock, still type-checks).
+   */
+  scoringMode?: ScoringMode;
 }
 
 /**

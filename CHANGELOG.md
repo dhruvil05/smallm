@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.3.0
+
+**Goal:** optional embedding-similarity scoring for free-text tasks that don't map neatly onto the fixed task enum.
+
+### Added
+- `scoringMode?: "rule" | "embedding" | "hybrid"` field on `ModelQuery` — optional, defaults to `"rule"`. Additive; omitting it preserves v0.1/v0.2 behavior exactly.
+- `scoringMode?: "rule" | "embedding" | "hybrid"` field on `ModelMatch` — reports which mode actually produced the result.
+- `src/embeddings.ts` — `embed(text)` and `cosineSimilarity(a, b)`. **Uses a small, local, self-authored character-trigram hashing scheme, not a downloaded neural embedding model** — the build/test environment couldn't verify a HuggingFace-hosted model download path, so this ships a fully offline, dependency-free alternative instead. Captures lexical similarity, not deep semantic meaning; see the file's docblock for the full trade-off and how to swap in a real model later. Embeddings are cached in-memory (keyed by exact text) so repeated calls don't recompute.
+- `"embedding"` scoring mode: score is purely `scoreEmbeddingSimilarity(model, query.task)`, comparing the free-text task against each candidate's available text signals (id, pipeline_tag, tags — the list endpoint doesn't provide real model descriptions, same limitation as `contextWindow`).
+- `"hybrid"` scoring mode: `finalScore = ruleScore * 0.60 + embeddingScore * 0.40` (locked weights, rule score still dominates per spec intent).
+- `scorer.ts`: `computeFinalScore()` (mode-aware wrapper around the existing `scoreModel()`) and `generateReasonWhyForResult()` (mode-aware `reasonWhy` text, adds a semantic-similarity note for `"embedding"`/`"hybrid"` modes).
+
+### Changed
+- `index.ts`'s score step now calls `computeFinalScore()` instead of `scoreModel()` directly. The rest of the locked pipeline order (validate → fetch → hard-filter → score → tie-break → sort → limit → return) is unchanged — hard filters run identically regardless of `scoringMode`, per the "filters stay mode-agnostic" cross-phase principle.
+
+### Compatibility
+- `scoreModel()` itself is untouched — all 14 pre-existing rule-scoring unit tests pass unmodified. `scoringMode` defaults to `"rule"`, so v0.1/v0.2 callers see byte-for-byte identical scoring behavior with no code changes required.
+
+---
+
 ## v0.2.0
 
 **Goal:** close MVP's honest shortcuts — real latency enforcement, persistent cache, typed errors.

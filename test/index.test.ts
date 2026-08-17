@@ -156,4 +156,59 @@ describe("findModels (integration)", () => {
 
     expect(results).toEqual([]); // excluded — 9800ms > 2000ms budget on cpu
   });
+
+  it("(v0.3) defaults to 'rule' mode — behavior identical to v0.1/v0.2 when scoringMode is omitted", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ id: "org/model-5B", pipeline_tag: "text-generation", downloads: 10 }],
+    });
+
+    const results = await findModels({ task: "chat", contextLength: 2048 });
+    expect(results[0].scoringMode).toBe("rule");
+  });
+
+  it("(v0.3) 'embedding' mode works end-to-end and tags results with scoringMode", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { id: "org/chat-conversational-model", pipeline_tag: "text-generation", tags: ["chat"], downloads: 10 },
+      ],
+    });
+
+    const results = await findModels({ task: "chat", contextLength: 2048, scoringMode: "embedding" });
+    expect(results).toHaveLength(1);
+    expect(results[0].scoringMode).toBe("embedding");
+    expect(results[0].reasonWhy.toLowerCase()).toContain("semantic similarity");
+  });
+
+  it("(v0.3) 'hybrid' mode works end-to-end and tags results with scoringMode", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { id: "org/chat-conversational-model", pipeline_tag: "text-generation", tags: ["chat"], downloads: 10 },
+      ],
+    });
+
+    const results = await findModels({ task: "chat", contextLength: 2048, scoringMode: "hybrid" });
+    expect(results).toHaveLength(1);
+    expect(results[0].scoringMode).toBe("hybrid");
+  });
+
+  it("(v0.3) hard filters still exclude models identically, regardless of scoringMode", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { id: "org/way-too-big-200B", pipeline_tag: "text-generation", downloads: 1 },
+      ],
+    });
+
+    const ruleResults = await findModels({ task: "chat", contextLength: 2048, maxParamsB: 7, scoringMode: "rule" });
+    const embeddingResults = await findModels({ task: "chat", contextLength: 2048, maxParamsB: 7, scoringMode: "embedding" });
+    const hybridResults = await findModels({ task: "chat", contextLength: 2048, maxParamsB: 7, scoringMode: "hybrid" });
+
+    // maxParamsB excludes the 200B model no matter which scoringMode is requested
+    expect(ruleResults).toEqual([]);
+    expect(embeddingResults).toEqual([]);
+    expect(hybridResults).toEqual([]);
+  });
 });
