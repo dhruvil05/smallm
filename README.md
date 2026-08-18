@@ -41,6 +41,22 @@ console.log(results);
 // ]
 ```
 
+### Multi-provider (v0.4)
+
+```ts
+// Query a locally running Ollama installation instead of (or alongside) HuggingFace.
+await findModels({ task: "chat", contextLength: 4096, providers: ["ollama"] });
+await findModels({ task: "chat", contextLength: 4096, providers: ["huggingface", "ollama"] });
+
+// Structured hardware — widened, not replacing the original string enum.
+await findModels({ task: "chat", contextLength: 4096, hardware: { type: "gpu", vramGB: 8 } });
+await findModels({ task: "chat", contextLength: 4096, hardware: "gpu-low" }); // still works
+```
+
+**Prerequisite for `providers: ["ollama"]`:** Ollama must be running locally (`ollama serve`, or the desktop app) and reachable at `http://localhost:11434`. If it isn't, `smallm` doesn't throw or crash the whole call — it logs a warning and simply returns no Ollama candidates, so a mixed `["huggingface", "ollama"]` query still returns your HuggingFace results.
+
+**Important:** `HardwareSpec.vramGB` filtering uses an **estimated** footprint (~2GB VRAM per 1B params, a common fp16 rule of thumb) — not a measured or authoritative figure. It's meant to rule out obviously-too-large models, not to guarantee something fits.
+
 ### Scoring modes (v0.3)
 
 ```ts
@@ -56,7 +72,29 @@ await findModels({ task: "pull key dates and amounts from scanned invoices", con
 await findModels({ task: "chat", contextLength: 4096, scoringMode: "hybrid" });
 ```
 
-**Important:** the "embedding" similarity here is a small, local, dependency-free **character-trigram hashing scheme** — not a downloaded neural embedding model. It's genuinely offline/free with no license concerns, but it captures lexical/surface similarity (shared substrings), not deep semantic meaning. See `src/embeddings.ts`'s docblock for the full trade-off and how to swap in a real neural embedding model later.
+### Multi-provider + structured hardware (v0.4)
+
+```ts
+// Query Ollama's locally installed models instead of (or alongside) HuggingFace.
+// Requires a running local Ollama installation — see "Ollama prerequisite" below.
+await findModels({ task: "chat", contextLength: 4096, providers: ["ollama"] });
+
+await findModels({ task: "chat", contextLength: 4096, providers: ["huggingface", "ollama"] });
+
+// Structured hardware spec — widens (doesn't replace) the original string enum.
+await findModels({
+  task: "chat",
+  contextLength: 4096,
+  hardware: { type: "gpu", vramGB: 8 }, // excludes models estimated to not fit
+});
+
+// Old string-enum form still works exactly as before:
+await findModels({ task: "chat", contextLength: 4096, hardware: "gpu-low" });
+```
+
+**Ollama prerequisite:** `providers: ["ollama"]` (or including `"ollama"` in a multi-provider list) expects a local Ollama installation running at `http://localhost:11434`. If it's not running or not installed, `smallm` doesn't throw or crash the whole query — it logs a warning and simply contributes zero Ollama candidates, so a mixed `["huggingface", "ollama"]` query still returns HuggingFace results normally. Ollama itself is never installed, started, or asked to download models by this package — it only queries what's already available locally.
+
+**`vramGB` filtering is a heuristic, not a measured constraint.** There's no standard "how much VRAM does model X need" figure available from either provider's listing API, so `smallm` estimates it from `paramsB` using a commonly-cited rule of thumb (~2GB VRAM per 1B parameters, roughly fp16 inference). A model quantized to 4-bit would actually need much less — this estimate is conservative/pessimistic in that case. Treat `vramGB` filtering as a rough guide, not a guarantee.
 
 ### Handling errors (v0.2)
 
@@ -88,11 +126,12 @@ The single public entry point. Validates the query, fetches live candidates from
 |---|---|---|---|
 | `task` | `"summarize" \| "classify" \| "extract" \| "chat" \| "code" \| "translate" \| string` | yes | |
 | `contextLength` | `number` | yes | Hard filter (tokens) |
-| `hardware` | `"cpu" \| "gpu-low" \| "gpu-high"` | no | Required alongside `maxLatencyMs` to enforce latency filtering (v0.2) |
+| `hardware` | `"cpu" \| "gpu-low" \| "gpu-high" \| { type: "cpu" \| "gpu"; vramGB?: number }` | no | String enum: required alongside `maxLatencyMs` to enforce latency filtering (v0.2). Object form (v0.4): `vramGB` enables the estimated-footprint hard filter. |
 | `domain` | `string` | no | Used in scoring, not filtering |
 | `maxParamsB` | `number` | no | Hard filter, e.g. `7` = "under 7B" |
-| `maxLatencyMs` | `number` | no | **v0.2:** real hard filter when a benchmark entry exists for the (model, `hardware`) pair. No entry = not enforced. |
+| `maxLatencyMs` | `number` | no | **v0.2:** real hard filter when a benchmark entry exists for the (model, string-enum `hardware`) pair. No entry = not enforced. |
 | `scoringMode` | `"rule" \| "embedding" \| "hybrid"` | no | **v0.3:** which scoring strategy to use. Defaults to `"rule"`. |
+| `providers` | `("huggingface" \| "ollama")[]` | no | **v0.4:** which registries to query. Defaults to `["huggingface"]`. |
 | `limit` | `number` | no | Defaults to `5` |
 | `cacheOptions` | `{ dir?: string; ttlMs?: number }` | no | **v0.2:** configure the file-based cache. Defaults: OS temp dir + `/smallm-cache`, 5-minute TTL |
 
@@ -100,8 +139,8 @@ The single public entry point. Validates the query, fetches live candidates from
 
 | Field | Type | Notes |
 |---|---|---|
-| `name` | `string` | HuggingFace model id |
-| `provider` | `"huggingface"` | |
+| `name` | `string` | Provider-specific model id |
+| `provider` | `"huggingface" \| "ollama"` | **v0.4:** widened from the literal `"huggingface"` |
 | `paramsB` | `number \| null` | `null` if size couldn't be detected |
 | `contextWindow` | `number \| null` | `null` if unknown (see limitations) |
 | `reasonWhy` | `string` | Generated from the scoring breakdown |
@@ -120,20 +159,30 @@ All thrown errors extend `SmallmError`:
 
 ## How scoring works
 
-Hard filters (`maxParamsB`, `contextLength`, `task`, and — as of v0.2 — `maxLatencyMs`) run **before** any scoring — a model that fails a hard filter never gets scored. Survivors are scored on four weighted components:
+Hard filters run **before** any scoring — a model that fails a hard filter never gets scored, regardless of `scoringMode` or which `providers` it came from:
+
+- `maxParamsB`, `contextLength`, `task` (MVP)
+- `maxLatencyMs` when a benchmark entry exists for the (model, string-enum `hardware`) pair (v0.2)
+- `hardware.vramGB` when an estimated footprint exceeds it (v0.4, heuristic — see "Known limitations")
+
+Survivors are scored. In `"rule"` mode (the default) that's four weighted components:
 
 - **Task match** — 50%
 - **Context window fit** — 20%
 - **Size fit** — 15%
 - **Domain match** — 15%
 
-Unknown metadata (e.g. undetectable param count, no benchmark entry) is never punished or excluded — it gets a neutral mid-range score for that component only, or is simply not filtered on.
+`"embedding"` mode scores purely on text similarity instead; `"hybrid"` blends both 60/40 (rule/embedding). See "Scoring modes (v0.3)" above.
+
+Unknown metadata (e.g. undetectable param count, no benchmark entry, unreachable Ollama) is never punished or excluded — it gets a neutral mid-range score for that component only, or is simply not filtered on.
 
 ## Known limitations
 
 - **Embedding mode uses lexical, not semantic, similarity.** The v0.3 `"embedding"`/`"hybrid"` scoring modes are backed by a small, local, dependency-free character-trigram hashing scheme (see `src/embeddings.ts`) — not a downloaded neural embedding model. It's genuinely offline and free, but two phrases that are semantically close yet share few characters (e.g. "extract key-value pairs from invoices" vs. "structured data extraction") will score lower than a real embedding model would give them.
+- **`vramGB` filtering is a heuristic, not a measured constraint.** Estimated from `paramsB` at ~2GB/1B params (roughly fp16). Quantized models need much less — this estimate skews conservative in that case. See "Multi-provider + structured hardware (v0.4)" above.
 - **Benchmark data is illustrative, not measured.** The shipped `src/data/benchmarks.json` contains a small set of placeholder latency numbers for demonstration and testing — not real measured inference latency. Replace it with genuinely benchmarked data before relying on `maxLatencyMs` exclusions in production.
-- `contextWindow` is currently always `null` — HuggingFace's list endpoint doesn't return it, and the pipeline doesn't do a per-model detail fetch. This means the context-length hard filter rarely excludes anything, and the context-fit score is always neutral. Tracked as a possible future addition.
+- `contextWindow` is currently always `null` for every provider — neither HuggingFace's list endpoint nor Ollama's `/api/tags` returns it, and the pipeline doesn't do a per-model detail fetch. This means the context-length hard filter rarely excludes anything, and the context-fit score is always neutral. Tracked as a possible future addition.
+- Ollama candidates never have a `pipeline_tag`, so the task hard filter always lets them through (same "unknown, don't exclude" rule as everywhere else) — task relevance for Ollama results relies entirely on scoring, not filtering.
 - Sub-billion-parameter models (e.g. `125M`) aren't detected by the size regex and report `paramsB: null`.
 - File-based cache only — no database engine. Cache entries are per-process-agnostic (survive restarts) but there's no cross-machine sharing.
 

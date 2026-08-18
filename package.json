@@ -1,6 +1,6 @@
 {
   "name": "smallm",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Find the right small language model (SLM) for a task, based on given context. Live rule-based matching against the HuggingFace API.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

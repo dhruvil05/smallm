@@ -211,4 +211,112 @@ describe("findModels (integration)", () => {
     expect(embeddingResults).toEqual([]);
     expect(hybridResults).toEqual([]);
   });
+
+  it("(v0.4) providers[] defaults to ['huggingface'] — identical to pre-v0.4 behavior when omitted", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ id: "org/model-5B", pipeline_tag: "text-generation", downloads: 10 }],
+    });
+
+    const results = await findModels({ task: "chat", contextLength: 2048 });
+    expect(results).toHaveLength(1);
+    expect(results[0].provider).toBe("huggingface");
+    const calledUrls = (global.fetch as any).mock.calls.map((c: any[]) => c[0]);
+    expect(calledUrls.every((u: string) => u.includes("huggingface.co"))).toBe(true);
+  });
+
+  it("(v0.4) providers: ['ollama'] queries only Ollama and tags results provider: 'ollama'", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        models: [{ name: "llama3:8b", details: { parameter_size: "8B", families: ["llama"] } }],
+      }),
+    });
+
+    const results = await findModels({ task: "chat", contextLength: 2048, providers: ["ollama"] });
+    expect(results).toHaveLength(1);
+    expect(results[0].provider).toBe("ollama");
+    expect(global.fetch).toHaveBeenCalledWith("http://localhost:11434/api/tags");
+  });
+
+  it("(v0.4) providers: ['huggingface', 'ollama'] fans out and merges candidates from both", async () => {
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("huggingface.co")) {
+        return {
+          ok: true,
+          json: async () => [{ id: "org/hf-chat-model", pipeline_tag: "text-generation", downloads: 100 }],
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          models: [{ name: "llama3:8b", details: { parameter_size: "8B", families: ["llama"] } }],
+        }),
+      };
+    });
+
+    const results = await findModels({
+      task: "chat",
+      contextLength: 2048,
+      providers: ["huggingface", "ollama"],
+    });
+
+    const providers = results.map((r) => r.provider).sort();
+    expect(providers).toEqual(["huggingface", "ollama"]);
+  });
+
+  it("(v0.4) Ollama being unreachable doesn't fail a multi-provider call — HF results still come back", async () => {
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("huggingface.co")) {
+        return {
+          ok: true,
+          json: async () => [{ id: "org/hf-chat-model", pipeline_tag: "text-generation", downloads: 100 }],
+        };
+      }
+      throw new Error("ECONNREFUSED"); // Ollama not running
+    });
+
+    const results = await findModels({
+      task: "chat",
+      contextLength: 2048,
+      providers: ["huggingface", "ollama"],
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].provider).toBe("huggingface");
+  });
+
+  it("(v0.4) HardwareSpec.vramGB excludes an oversized model, same as maxParamsB would", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        models: [{ name: "huge-model:70b", details: { parameter_size: "70B" } }], // ~140GB estimated
+      }),
+    });
+
+    const results = await findModels({
+      task: "chat",
+      contextLength: 2048,
+      providers: ["ollama"],
+      hardware: { type: "gpu", vramGB: 8 },
+    });
+
+    expect(results).toEqual([]);
+  });
+
+  it("(v0.4) legacy string-enum hardware still works unchanged alongside the new providers[] field", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ id: "meta-llama/Llama-3-8B-Instruct", pipeline_tag: "text-generation", downloads: 100 }],
+    });
+
+    const results = await findModels({
+      task: "chat",
+      contextLength: 2048,
+      hardware: "cpu", // old string-enum form
+      maxLatencyMs: 2000,
+    });
+
+    expect(results).toEqual([]); // still excluded via the v0.2 benchmark path — unchanged
+  });
 });

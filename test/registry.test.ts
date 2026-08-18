@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchCandidateModels, mapTaskToPipelineTag, HuggingFaceApiError } from "../src/registry/huggingface";
+import { fetchCandidateModels, mapTaskToPipelineTag, HuggingFaceApiError, huggingfaceProvider } from "../src/registry/huggingface";
 import { HFApiError, RateLimitError, ValidationError } from "../src/errors";
 
 describe("mapTaskToPipelineTag", () => {
@@ -136,5 +136,34 @@ describe("ValidationError is distinct from HFApiError", () => {
     const hfApi = new HFApiError("api down", 500);
     expect(validation).not.toBeInstanceOf(HFApiError);
     expect(hfApi).not.toBeInstanceOf(ValidationError);
+  });
+});
+
+describe("(v0.4) huggingfaceProvider", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    global.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("implements the Provider interface with name 'huggingface'", () => {
+    expect(huggingfaceProvider.name).toBe("huggingface");
+    expect(typeof huggingfaceProvider.listCandidates).toBe("function");
+  });
+
+  it("listCandidates delegates to fetchCandidateModels using query.task, tagging results with provider", async () => {
+    (global.fetch as any).mockResolvedValue({
+      ok: true,
+      json: async () => [{ id: "org/model", pipeline_tag: "text-generation", downloads: 5 }],
+    });
+
+    const results = await huggingfaceProvider.listCandidates({ task: "chat", contextLength: 2048 });
+    expect(results).toHaveLength(1);
+    expect(results[0].provider).toBe("huggingface");
   });
 });

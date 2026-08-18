@@ -1,5 +1,6 @@
 import { HFModel } from "../types";
 import { HFApiError, RateLimitError } from "../errors";
+import { Provider } from "./provider";
 
 const HF_API_BASE = "https://huggingface.co/api/models";
 
@@ -69,6 +70,7 @@ async function fetchOnce(url: string): Promise<HFModel[]> {
 
   return data.map((item): HFModel => ({
     id: item.id,
+    provider: "huggingface",
     pipeline_tag: item.pipeline_tag,
     tags: item.tags ?? [],
     downloads: item.downloads ?? 0,
@@ -110,3 +112,14 @@ export async function fetchCandidateModels(task: string): Promise<HFModel[]> {
   // and gives a sane fallback if MAX_RETRIES were ever set to a negative number.
   throw lastError ?? new HFApiError("HuggingFace API request failed with no response");
 }
+
+/**
+ * (v0.4) Provider implementation wrapping fetchCandidateModels — no behavior
+ * change to the underlying fetch/retry/error logic above, this just adapts
+ * the existing function to the shared Provider interface so index.ts can
+ * treat HuggingFace the same way it treats every other provider.
+ */
+export const huggingfaceProvider: Provider = {
+  name: "huggingface",
+  listCandidates: (query) => fetchCandidateModels(query.task),
+};
