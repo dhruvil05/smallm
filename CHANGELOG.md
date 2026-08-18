@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.4.0
+
+**Goal:** query more than just HuggingFace, and filter on real hardware constraints instead of a coarse enum.
+
+### Added
+- `Provider` interface (`src/registry/provider.ts`): `{ name, listCandidates(query) }`. Both `huggingfaceProvider` (`registry/huggingface.ts`) and the new `ollamaProvider` (`registry/ollama.ts`) implement it.
+- `RawModel` type (`types.ts`) — the shared shape every provider maps its data into before candidates reach `filters.ts`/`scorer.ts`. Those two files remain fully provider-agnostic; they never branch on `model.provider`. (`HFModel` is kept as a backward-compatible type alias for `RawModel` — no existing internal call sites or test fixtures needed changes.)
+- `providers?: ("huggingface" | "ollama")[]` field on `ModelQuery` — optional, defaults to `["huggingface"]`. Additive; omitting it preserves v0.1–v0.3 behavior exactly (only the HuggingFace endpoint is ever called).
+- `registry/ollama.ts` — queries a local Ollama installation (`GET http://localhost:11434/api/tags`) for already-available models. Never pulls, installs, or downloads a model. If Ollama isn't running or errors, it logs a warning and contributes an empty candidate list rather than rejecting the whole `findModels()` call — so a mixed `["huggingface", "ollama"]` query still returns HuggingFace results normally.
+- `HardwareSpec` type: `{ type: "cpu" | "gpu"; vramGB?: number }`. `ModelQuery.hardware` is **widened** to accept this in addition to the original `"cpu" | "gpu-low" | "gpu-high"` string enum — existing string-enum callers are unaffected.
+- New hard filter in `filters.ts`: when `hardware` is the `HardwareSpec` object form and `vramGB` is given, models are excluded if their estimated VRAM footprint (`paramsB * 2GB`, a documented heuristic — not a measured figure) exceeds it. Unknown `paramsB` or missing `vramGB` → not filtered, same unknown-value rule as everywhere else.
+- `index.ts`'s fetch step now fans out to every requested provider in parallel and merges results before hard-filtering. Each `(provider, task)` pair is cached independently via a new generic `getOrFetchCached()` helper in `cache-file.ts`.
+- `ModelMatch.provider` widened from the literal `"huggingface"` to `"huggingface" | "ollama"`.
+
+### Changed
+- `filters.ts`'s `maxLatencyMs` check now only looks up benchmark data when `hardware` is the original string-enum form (the benchmark dataset is keyed by that enum, not by arbitrary `HardwareSpec` objects) — passing a `HardwareSpec` object alongside `maxLatencyMs` simply doesn't enforce that filter, rather than erroring.
+- `cache-file.ts`'s `fetchCandidateModelsCached()` is now implemented on top of the new generic `getOrFetchCached()`, key-namespaced to `"huggingface:${task}"`. Kept as a backward-compatible export; existing tests pass unmodified.
+
+### Compatibility
+- `filters.ts` and `scorer.ts` were not touched beyond the new `vramGB` filter — both remain fully provider-agnostic, never inspecting `model.provider`.
+- All 12 pre-existing `index.test.ts` integration tests pass unmodified; default behavior (`providers` omitted) makes exactly the same HuggingFace-only calls as before.
+- `HFModel` (used throughout `filters.ts`, `scorer.ts`, `params.ts`, and their tests) is preserved as a type alias for `RawModel` — zero call sites needed renaming.
+
+---
+
 ## v0.3.0
 
 **Goal:** optional embedding-similarity scoring for free-text tasks that don't map neatly onto the fixed task enum.

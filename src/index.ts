@@ -1,16 +1,39 @@
-import { ModelQuery, ModelMatch } from "./types";
+import { ModelQuery, ModelMatch, ProviderName, RawModel } from "./types";
 import { validateQuery } from "./query";
-import { fetchCandidateModelsCached, configureCandidateModelsCache } from "./cache-file";
+import { getOrFetchCached, configureCandidateModelsCache } from "./cache-file";
 import { enrichWithParams } from "./params";
 import { applyHardFilters } from "./filters";
 import { computeFinalScore, generateReasonWhyForResult, compareModels } from "./scorer";
-import { mapTaskToPipelineTag } from "./registry/huggingface";
+import { mapTaskToPipelineTag, huggingfaceProvider } from "./registry/huggingface";
+import { ollamaProvider } from "./registry/ollama";
+import { Provider } from "./registry/provider";
+
+/** (v0.4) Registry of known providers, keyed by name, for the fan-out step below. */
+const PROVIDERS: Record<ProviderName, Provider> = {
+  huggingface: huggingfaceProvider,
+  ollama: ollamaProvider,
+};
 
 /**
- * Finds and ranks HuggingFace models matching the given query.
+ * Finds and ranks models matching the given query, across one or more
+ * providers (HuggingFace by default; optionally Ollama as of v0.4).
  *
- * Pipeline (locked order, per MVP guide Section 5, Step 8 — unchanged in v0.2 and v0.3):
+ * Pipeline (locked order, per MVP guide Section 5, Step 8 — unchanged since MVP):
  *   validate -> fetch -> hard-filter -> score -> tie-break -> sort -> limit -> return
+ *
+ * v0.4 changes (see post-MVP guide):
+ *   - New optional `providers` field: which registries to query. Defaults
+ *     to ["huggingface"] — identical behavior to v0.1-v0.3 when omitted.
+ *   - The FETCH step now fans out to every requested provider in parallel
+ *     and merges their RawModel[] results before hard-filtering — filters.ts
+ *     and scorer.ts never see provider-specific shapes or branch on
+ *     provider name (v0.4 Do's/Don'ts).
+ *   - `hardware` is widened to optionally accept a structured HardwareSpec
+ *     ({ type, vramGB? }) alongside the original string enum. When vramGB
+ *     is given, filters.ts applies an estimated-footprint hard filter
+ *     (see that file for the heuristic and its caveats).
+ *   - Ollama being unreachable never fails the whole call — see
+ *     registry/ollama.ts for the graceful-degradation behavior.
  *
  * v0.3 changes (see post-MVP guide):
  *   - New optional `scoringMode`: "rule" (default, unchanged v0.1/v0.2
@@ -25,18 +48,17 @@ import { mapTaskToPipelineTag } from "./registry/huggingface";
  * v0.2 changes (see post-MVP guide):
  *   - fetch is now backed by a file-based cache (cache-file.ts) instead of
  *     MVP's in-memory Map, so repeated queries survive process restarts.
- *     Same call-site shape, so this swap didn't touch the pipeline order.
- *   - maxLatencyMs is now a real hard filter when both it and `hardware`
- *     are provided AND a benchmark entry exists for that (model, hardware)
- *     pair (see filters.ts, benchmark.ts). Still unenforced when no
- *     benchmark data is available — unknown values are never punished.
+ *   - maxLatencyMs is now a real hard filter when both it and the original
+ *     string-form `hardware` are provided AND a benchmark entry exists for
+ *     that (model, hardware) pair (see filters.ts, benchmark.ts). Still
+ *     unenforced otherwise — unknown values are never punished.
  *   - HuggingFace fetch failures now retry transient errors (429/5xx) with
  *     backoff before throwing a typed SmallmError subclass (errors.ts).
  *
- * Known MVP-era limitation, still present in v0.2/v0.3: candidate models
- * come only from HuggingFace's list endpoint, which does not return
- * context-window data, so `contextWindow` stays null/unknown for every
- * model and the context-fit score component stays neutral (50). Not part
+ * Known MVP-era limitation, still present through v0.4: candidate models
+ * from HuggingFace come only from its list endpoint, which does not return
+ * context-window data, so `contextWindow` stays null/unknown for those
+ * models and the context-fit score component stays neutral (50). Not part
  * of any shipped phase's scope yet — tracked as a future addition.
  */
 export async function findModels(query: ModelQuery): Promise<ModelMatch[]> {
@@ -48,11 +70,18 @@ export async function findModels(query: ModelQuery): Promise<ModelMatch[]> {
     configureCandidateModelsCache(validated.cacheOptions);
   }
 
-  // 2. fetch (cached — file-backed, see cache-file.ts)
-  const rawCandidates = await fetchCandidateModelsCached(validated.task);
+  // 2. fetch — (v0.4) fan out to every requested provider, cached per
+  //    (provider, task) pair, then merge before anything downstream sees them.
+  const providerLists = await Promise.all(
+    validated.providers.map((providerName) => {
+      const provider = PROVIDERS[providerName];
+      return getOrFetchCached(`${provider.name}:${validated.task}`, () => provider.listCandidates(validated));
+    })
+  );
+  const rawCandidates: RawModel[] = providerLists.flat();
   const enriched = enrichWithParams(rawCandidates);
 
-  // 3. hard-filter — mode-agnostic, runs identically for every scoringMode
+  // 3. hard-filter — mode-agnostic and provider-agnostic, runs identically regardless of scoringMode/providers
   const filtered = applyHardFilters(enriched, validated);
 
   // 4. score — mode-aware as of v0.3 (rule / embedding / hybrid)
@@ -76,7 +105,7 @@ export async function findModels(query: ModelQuery): Promise<ModelMatch[]> {
   // 8. return — map to the public ModelMatch shape
   return top.map(({ model, result }): ModelMatch => ({
     name: model.id,
-    provider: "huggingface",
+    provider: model.provider ?? "huggingface",
     paramsB: model.paramsB ?? null,
     contextWindow: model.contextWindow ?? null,
     reasonWhy: generateReasonWhyForResult(result),

@@ -111,16 +111,32 @@ function getCache(): FileTTLCache<HFModel[]> {
 
 /**
  * (v0.2) Cached wrapper around fetchCandidateModels, backed by the
- * file-based cache instead of MVP's in-memory Map. Same call-site shape as
- * MVP's cache.ts — index.ts swaps its import and nothing else changes.
+ * file-based cache instead of MVP's in-memory Map. Kept for backward
+ * compatibility (this exact function existed pre-v0.4) — built on the
+ * generic getOrFetchCached below, key-namespaced to "huggingface" so it
+ * can't collide with other providers' cache entries.
  */
 export async function fetchCandidateModelsCached(task: string): Promise<HFModel[]> {
+  return getOrFetchCached(`huggingface:${task}`, () => fetchCandidateModels(task));
+}
+
+/**
+ * (v0.4) Generic cached-fetch helper, used by index.ts to cache each
+ * requested provider's candidate list independently (keyed by
+ * `${providerName}:${task}`, so HuggingFace and Ollama results for the
+ * same task never collide). Not provider-specific itself — any async
+ * producer of RawModel[] can use this.
+ */
+export async function getOrFetchCached(
+  key: string,
+  fetchFn: () => Promise<HFModel[]>
+): Promise<HFModel[]> {
   const cache = getCache();
-  const cached = cache.get(task);
+  const cached = cache.get(key);
   if (cached) return cached;
 
-  const result = await fetchCandidateModels(task);
-  cache.set(task, result);
+  const result = await fetchFn();
+  cache.set(key, result);
   return result;
 }
 

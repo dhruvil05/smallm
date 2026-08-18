@@ -81,7 +81,7 @@ describe("applyHardFilters", () => {
     expect(result).toHaveLength(1);
   });
 
-  it("(v0.2) does not enforce maxLatencyMs at all when hardware isn't specified", () => {
+  it("(v0.4) does not enforce maxLatencyMs at all when hardware isn't specified", () => {
     // Can't judge latency without knowing which hardware bucket applies.
     const models = [model({ id: "meta-llama/Llama-3-8B-Instruct" })]; // cpu would be 9800ms
     const result = applyHardFilters(models, {
@@ -90,6 +90,61 @@ describe("applyHardFilters", () => {
       // no hardware specified
     });
     expect(result).toHaveLength(1);
+  });
+
+  it("(v0.4) does not enforce maxLatencyMs when hardware is a HardwareSpec object (benchmark keyed by string enum only)", () => {
+    const models = [model({ id: "meta-llama/Llama-3-8B-Instruct" })]; // cpu string-enum entry: 9800ms
+    const result = applyHardFilters(models, {
+      ...baseQuery,
+      maxLatencyMs: 100,
+      hardware: { type: "cpu" }, // HardwareSpec form, not the string enum
+    });
+    expect(result).toHaveLength(1); // not excluded — no matching benchmark key for the object form
+  });
+
+  it("(v0.4) excludes a model whose estimated VRAM footprint exceeds HardwareSpec.vramGB", () => {
+    const models = [model({ id: "org/big-model", paramsB: 13 })]; // ~26GB estimated at 2GB/B
+    const result = applyHardFilters(models, {
+      ...baseQuery,
+      hardware: { type: "gpu", vramGB: 8 },
+    });
+    expect(result).toHaveLength(0);
+  });
+
+  it("(v0.4) keeps a model whose estimated VRAM footprint fits within vramGB", () => {
+    const models = [model({ id: "org/small-model", paramsB: 3 })]; // ~6GB estimated at 2GB/B
+    const result = applyHardFilters(models, {
+      ...baseQuery,
+      hardware: { type: "gpu", vramGB: 8 },
+    });
+    expect(result).toHaveLength(1);
+  });
+
+  it("(v0.4) does not exclude on vramGB when paramsB is unknown", () => {
+    const models = [model({ id: "org/mystery-model", paramsB: null })];
+    const result = applyHardFilters(models, {
+      ...baseQuery,
+      hardware: { type: "gpu", vramGB: 1 }, // tiny budget, but unknown paramsB => let through
+    });
+    expect(result).toHaveLength(1);
+  });
+
+  it("(v0.4) does not exclude on vramGB when vramGB itself isn't specified", () => {
+    const models = [model({ id: "org/huge-model", paramsB: 200 })];
+    const result = applyHardFilters(models, {
+      ...baseQuery,
+      hardware: { type: "gpu" }, // no vramGB given
+    });
+    expect(result).toHaveLength(1);
+  });
+
+  it("(v0.4) never excludes based on model.provider — filters stay provider-agnostic", () => {
+    const models = [
+      model({ id: "org/hf-model", provider: "huggingface", paramsB: 5 }),
+      model({ id: "org/ollama-model", provider: "ollama", paramsB: 5, pipeline_tag: undefined }),
+    ];
+    const result = applyHardFilters(models, { ...baseQuery, maxParamsB: 7 });
+    expect(result).toHaveLength(2); // both pass identically — provider never inspected
   });
 
   it("applies all three filters together", () => {

@@ -12,8 +12,9 @@ export interface ModelQuery {
   /** REQUIRED. Minimum context window needed, in tokens. Treated as a HARD filter. */
   contextLength: number;
 
-  /** Optional hint about target hardware. Not enforced as a filter in MVP — informational only. */
-  hardware?: "cpu" | "gpu-low" | "gpu-high";
+  /** Optional hint about target hardware. v0.4: widened to also accept a
+   *  structured HardwareSpec — existing string-enum callers keep working. */
+  hardware?: "cpu" | "gpu-low" | "gpu-high" | HardwareSpec;
 
   /** Optional domain tag to prefer, e.g. "medical", "legal". Used in scoring only. */
   domain?: string;
@@ -44,15 +45,36 @@ export interface ModelQuery {
    * Additive — omitting it preserves prior-version behavior exactly.
    */
   scoringMode?: ScoringMode;
+
+  /**
+   * v0.4 addition, optional. Which registries to query. Defaults to
+   * ["huggingface"] when omitted — identical behavior to v0.1-v0.3.
+   */
+  providers?: ProviderName[];
 }
 
 /** v0.3: which scoring strategy to use. */
 export type ScoringMode = "rule" | "embedding" | "hybrid";
 
+/** v0.4: which registries a query can target. */
+export type ProviderName = "huggingface" | "ollama";
+
+/**
+ * v0.4: structured hardware spec carrying real VRAM figures, for more
+ * precise filtering than the coarse cpu/gpu-low/gpu-high enum allows.
+ * ModelQuery.hardware is WIDENED to accept this in addition to the
+ * original string enum — see that field's doc comment.
+ */
+export interface HardwareSpec {
+  type: "cpu" | "gpu";
+  vramGB?: number;
+}
+
 /** A single scored model returned to the caller. */
 export interface ModelMatch {
   name: string;
-  provider: "huggingface";
+  /** v0.4: widened from the literal "huggingface" to include "ollama". */
+  provider: ProviderName;
   /** null if size could not be detected from id/tags/config. */
   paramsB: number | null;
   /** null if context window could not be determined. */
@@ -73,26 +95,45 @@ export interface ModelMatch {
 }
 
 /**
- * Raw-ish shape of a model as we work with it internally, before it becomes
- * a ModelMatch. This is NOT part of the public contract — filters.ts,
- * scorer.ts, and params.ts all operate on this shape.
+ * v0.4: shared shape every Provider implementation maps its raw data into,
+ * before candidates reach filters.ts / scorer.ts. Those two files only
+ * ever see this shape — never provider-specific data — so they stay fully
+ * provider-agnostic (per the v0.4 guide's Do's/Don'ts). NOT part of the
+ * public contract.
  */
-export interface HFModel {
-  /** HuggingFace model id, e.g. "meta-llama/Llama-3-8B-Instruct" */
+export interface RawModel {
+  /** Provider-specific model id, e.g. "meta-llama/Llama-3-8B-Instruct" (HF) or "llama3:8b" (Ollama). */
   id: string;
-  /** HuggingFace's task classification for the model, e.g. "text-generation" */
+  /**
+   * Which provider this candidate came from. Optional rather than required
+   * purely so pre-v0.4 internal call sites/test fixtures (written before
+   * the provider abstraction existed) keep type-checking unmodified —
+   * every real Provider implementation always sets it in practice, and
+   * index.ts falls back to "huggingface" if it's ever missing.
+   */
+  provider?: ProviderName;
+  /** Task classification for the model, e.g. "text-generation". HuggingFace-specific concept; undefined for Ollama. */
   pipeline_tag?: string;
-  /** Free-form tags HF attaches to the model — used for domain matching etc. */
+  /** Free-form tags — used for domain matching etc. */
   tags?: string[];
-  /** Download count — used only for tie-breaking (Section 4.5), not scoring. */
+  /** Download count — used only for tie-breaking (Section 4.5), not scoring. HuggingFace-specific; undefined for Ollama. */
   downloads?: number;
-  /** Filled in by params.ts after extraction. Not present on raw API response. */
+  /** Filled in by params.ts after extraction. Not present on raw provider response. */
   paramsB?: number | null;
-  /** Filled in by params.ts after extraction. Not present on raw API response. */
+  /** Filled in by params.ts after extraction. Not present on raw provider response. */
   paramsSource?: ParamsSource;
   /** Context window in tokens, if known. May come from config data. */
   contextWindow?: number | null;
 }
+
+/**
+ * Backward-compatible alias. filters.ts, scorer.ts, params.ts, and their
+ * existing tests were written against "HFModel" before the v0.4 provider
+ * abstraction existed — same shape now that HuggingFace is one of possibly
+ * several providers, so this is kept as an alias rather than forcing a
+ * rename at every call site.
+ */
+export type HFModel = RawModel;
 
 /**
  * Internal-only tracking type. Explains WHERE a paramsB value came from,

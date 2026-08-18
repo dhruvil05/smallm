@@ -72,4 +72,51 @@ describe("validateQuery", () => {
     // @ts-expect-error testing runtime validation
     expect(() => validateQuery({ ...baseQuery, scoringMode: "vibes" })).toThrow(InvalidQueryError);
   });
+
+  it("(v0.4) defaults providers to ['huggingface'] when omitted", () => {
+    expect(validateQuery(baseQuery).providers).toEqual(["huggingface"]);
+  });
+
+  it("(v0.4) accepts a valid providers array", () => {
+    expect(validateQuery({ ...baseQuery, providers: ["ollama"] }).providers).toEqual(["ollama"]);
+    expect(validateQuery({ ...baseQuery, providers: ["huggingface", "ollama"] }).providers).toEqual([
+      "huggingface",
+      "ollama",
+    ]);
+  });
+
+  it("(v0.4) throws on an empty providers array", () => {
+    expect(() => validateQuery({ ...baseQuery, providers: [] })).toThrow(InvalidQueryError);
+  });
+
+  it("(v0.4) throws on an invalid provider name", () => {
+    // @ts-expect-error testing runtime validation
+    expect(() => validateQuery({ ...baseQuery, providers: ["ollama", "not-a-provider"] })).toThrow(InvalidQueryError);
+  });
+
+  it("(v0.4) still accepts the original hardware string enum", () => {
+    expect(() => validateQuery({ ...baseQuery, hardware: "gpu-high" })).not.toThrow();
+  });
+
+  it("(v0.4) accepts a valid HardwareSpec object", () => {
+    expect(() => validateQuery({ ...baseQuery, hardware: { type: "gpu", vramGB: 8 } })).not.toThrow();
+    expect(() => validateQuery({ ...baseQuery, hardware: { type: "cpu" } })).not.toThrow(); // vramGB optional
+  });
+
+  it("(v0.4) throws on an invalid HardwareSpec.type", () => {
+    // @ts-expect-error testing runtime validation
+    expect(() => validateQuery({ ...baseQuery, hardware: { type: "quantum" } })).toThrow(InvalidQueryError);
+  });
+
+  it("(v0.4) throws on a non-positive HardwareSpec.vramGB", () => {
+    expect(() => validateQuery({ ...baseQuery, hardware: { type: "gpu", vramGB: 0 } })).toThrow(InvalidQueryError);
+    expect(() => validateQuery({ ...baseQuery, hardware: { type: "gpu", vramGB: -8 } })).toThrow(InvalidQueryError);
+  });
+
+  it("(v0.4) throws on a completely invalid hardware value", () => {
+    // @ts-expect-error testing runtime validation
+    expect(() => validateQuery({ ...baseQuery, hardware: "quantum-computer" })).toThrow(InvalidQueryError);
+    // @ts-expect-error testing runtime validation
+    expect(() => validateQuery({ ...baseQuery, hardware: 42 })).toThrow(InvalidQueryError);
+  });
 });
