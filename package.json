@@ -1,9 +1,12 @@
 {
   "name": "smallm",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Find the right small language model (SLM) for a task, based on given context. Live rule-based matching against the HuggingFace API.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "smallm": "dist/cli.js"
+  },
   "files": [
     "dist"
   ],
@@ -12,6 +15,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "postbuild": "node -e \"try { require('fs').chmodSync('dist/cli.js', 0o755); } catch (e) {}\"",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -20,7 +24,8 @@
     "slm",
     "small-language-model",
     "huggingface",
-    "model-selection"
+    "model-selection",
+    "cli"
   ],
   "author": "",
   "license": "ISC",
