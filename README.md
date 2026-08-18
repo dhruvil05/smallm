@@ -186,12 +186,56 @@ Unknown metadata (e.g. undetectable param count, no benchmark entry, unreachable
 - Sub-billion-parameter models (e.g. `125M`) aren't detected by the size regex and report `paramsB: null`.
 - File-based cache only — no database engine. Cache entries are per-process-agnostic (survive restarts) but there's no cross-machine sharing.
 
+## CLI (v0.5, optional)
+
+`smallm` is library-first, but ships an optional CLI as a thin wrapper around `findModels()`. Every flag maps 1:1 to a `ModelQuery` field — the CLI contains no scoring, filtering, or provider logic of its own; it only parses flags and formats output. If you can do it via `findModels()`, you can do it via the CLI, and nothing else.
+
+```bash
+npx smallm find --task summarize --context 4096
+npx smallm find --task chat --context 8192 --max-params 7 --json
+npx smallm find --task chat --context 4096 --providers huggingface,ollama --hardware-type gpu --hardware-vram 8
+```
+
+Default output is a table:
+
+```
+NAME                                       PROVIDER     PARAMS(B)  SCORE  MODE       REASON
+------------------------------------------ ------------ ---------- ------ ---------- --------------------------------------------------
+org/some-7b-chat-model                     huggingface  6.5        87     rule       Strong task match, sufficient context window, and…
+```
+
+Pass `--json` for the raw `ModelMatch[]` instead — identical to what `findModels()` returns programmatically:
+
+```bash
+npx smallm find --task chat --context 4096 --json | jq '.[0].name'
+```
+
+### Flags
+
+| Flag | Maps to | Notes |
+|---|---|---|
+| `--task <task>` | `task` | Required |
+| `--context <tokens>` | `contextLength` | Required |
+| `--max-params <billions>` | `maxParamsB` | |
+| `--domain <domain>` | `domain` | |
+| `--hardware <cpu\|gpu-low\|gpu-high>` | `hardware` (string form) | |
+| `--hardware-type <cpu\|gpu>` + `--hardware-vram <gb>` | `hardware` (`HardwareSpec` form) | Takes precedence over `--hardware` if both given |
+| `--max-latency <ms>` | `maxLatencyMs` | |
+| `--scoring-mode <rule\|embedding\|hybrid>` | `scoringMode` | |
+| `--providers <list>` | `providers` | Comma-separated, e.g. `huggingface,ollama` |
+| `--limit <n>` | `limit` | |
+| `--cache-dir <path>` / `--cache-ttl <ms>` | `cacheOptions` | |
+| `--json` | — (output mode only) | Not a `ModelQuery` field — controls formatting, not what's queried |
+
+Run `npx smallm find --help` (or with no arguments) to see this from the terminal. Invalid input (a missing `--task`, a bad `--scoring-mode` value, etc.) isn't validated by the CLI itself — it's passed straight to `findModels()`, which throws the same typed errors (see "Handling errors" above) that the CLI then prints cleanly with a non-zero exit code.
+
 ## Development
 
 ```bash
 npm install
-npm run build   # compile TypeScript -> dist/
+npm run build   # compile TypeScript -> dist/ (also chmods dist/cli.js executable)
 npm test         # run the unit + integration test suite
+npm link          # optional: try the CLI locally as the `smallm` command
 ```
 
 ## Changelog

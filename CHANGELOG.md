@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.5.0
+
+**Goal:** optional CLI — a thin wrapper around `findModels()`, greenlit after explicit discussion (this phase was marked "only if scope is revisited" in the roadmap, not scheduled by default).
+
+### Added
+- `src/cli.ts` — `npx smallm find [flags]`. Every flag maps 1:1 to a `ModelQuery` field; the file contains zero scoring/filtering/provider logic. `parseArgs()` and `formatTable()` are pure, independently tested functions; `main()` is the only part that touches `console`/`process.exit`.
+- Human-readable table output by default (`formatTable()`); `--json` flag for raw `ModelMatch[]` output.
+- `bin.smallm` field in `package.json` pointing at `dist/cli.js`; a `postbuild` script `chmod`s it executable.
+- Structured `--hardware-type`/`--hardware-vram` flags mapping to the v0.4 `HardwareSpec` object form, alongside the original `--hardware <string>` flag for the v0.1-v0.3 string enum — structured form takes precedence if both are given.
+
+### Compatibility
+- **No library contract change** — `ModelQuery`, `ModelMatch`, and `findModels()` are untouched by this phase. The CLI is purely additive tooling on top of the existing library.
+- CLI input is never independently validated — flags are mapped to a `ModelQuery` object and handed directly to `findModels()`, which performs the same validation (and throws the same typed errors) as any other caller. This was a deliberate choice per the "no business logic beyond flag parsing and output formatting" rule, not an oversight.
+- Verified end-to-end against the real compiled `dist/cli.js` binary (not just unit-tested): usage/help output, an unknown-flag error, a missing-required-field library error, a real HuggingFace API failure (blocked by this build environment's network allowlist — confirmed the typed error surfaces cleanly rather than crashing), and Ollama's graceful-degradation path when unreachable.
+- A dedicated test (`"produces the exact same result set as calling findModels() directly with equivalent arguments"`) directly checks the v0.5 Definition of Done: CLI output is byte-for-byte identical to calling the library function directly.
+
+---
+
 ## v0.4.0
 
 **Goal:** query more than just HuggingFace, and filter on real hardware constraints instead of a coarse enum.
