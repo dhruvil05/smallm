@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { findModels, SmallmError } from "./index";
 import { ModelQuery, ModelMatch } from "./types";
+import { UNSAFE_DISPLAY_CHARS } from "./validate";
 
 /**
  * Thin CLI wrapper around findModels(). Per the v0.5 guide's Do's/Don'ts:
@@ -23,6 +24,8 @@ export interface ParsedCli {
   query: ModelQuery;
   json: boolean;
   showHelp: boolean;
+  /** Non-fatal notices (e.g. a flag that was overridden), printed to stderr by main(). */
+  warnings: string[];
 }
 
 export const USAGE = `Usage: smallm find [options]
@@ -64,9 +67,13 @@ export function parseArgs(argv: string[]): ParsedCli {
   let cacheDir: string | undefined;
   let cacheTtl: number | undefined;
 
+  const warnings: string[] = [];
+
   const takeValue = (flag: string, i: number): [string, number] => {
     const value = argv[i + 1];
-    if (value === undefined) {
+    // A following "--flag" is the next option, not this flag's value
+    // (otherwise `--task --json` would search for the task "--json").
+    if (value === undefined || value.startsWith("--")) {
       throw new CliUsageError(`Flag ${flag} requires a value`);
     }
     return [value, i + 1];
@@ -169,6 +176,18 @@ export function parseArgs(argv: string[]): ParsedCli {
   // Structured hardware form takes precedence if given; otherwise fall back
   // to the string-enum form. Both map onto the exact same ModelQuery.hardware
   // field the library already accepts — no new capability invented here.
+  if (hardwareVram !== undefined && hardwareType === undefined) {
+    // Previously dropped silently, so the VRAM filter just never ran.
+    throw new CliUsageError("--hardware-vram requires --hardware-type (e.g. --hardware-type gpu --hardware-vram 8)");
+  }
+  if (hardwareType !== undefined && hardwareString !== undefined) {
+    // Documented precedence is kept; just make the override visible.
+    warnings.push(
+      `--hardware ${hardwareString} is ignored because --hardware-type is set` +
+        (query.maxLatencyMs !== undefined ? "; --max-latency is only enforced with --hardware, so it has no effect" : "")
+    );
+  }
+
   if (hardwareType !== undefined) {
     query.hardware = {
       type: hardwareType,
@@ -185,11 +204,20 @@ export function parseArgs(argv: string[]): ParsedCli {
     };
   }
 
-  return { query: query as unknown as ModelQuery, json, showHelp };
+  return { query: query as unknown as ModelQuery, json, showHelp, warnings };
+}
+
+/** Same character set the validators reject: controls, zero-width, bidi overrides/isolates, separators, BOM. */
+const CONTROL_CHARS = new RegExp(UNSAFE_DISPLAY_CHARS.source, "g");
+
+/** Removes control/invisible characters so text can't inject terminal escapes or visually disguise itself. */
+export function stripControlChars(str: string): string {
+  return str.replace(CONTROL_CHARS, "");
 }
 
 function truncate(str: string, max: number): string {
-  return str.length > max ? str.slice(0, max - 1) + "…" : str;
+  const clean = stripControlChars(str);
+  return clean.length > max ? clean.slice(0, max - 1) + "…" : clean;
 }
 
 /** Pure formatter: ModelMatch[] -> a human-readable table string. */
@@ -200,7 +228,7 @@ export function formatTable(results: ModelMatch[]): string {
 
   const columns: Array<{ header: string; width: number; get: (m: ModelMatch) => string }> = [
     { header: "NAME", width: 42, get: (m) => truncate(m.name, 42) },
-    { header: "PROVIDER", width: 12, get: (m) => m.provider },
+    { header: "PROVIDER", width: 12, get: (m) => truncate(m.provider, 12) },
     { header: "PARAMS(B)", width: 10, get: (m) => (m.paramsB == null ? "?" : String(m.paramsB)) },
     { header: "SCORE", width: 6, get: (m) => String(m.score) },
     { header: "MODE", width: 10, get: (m) => m.scoringMode ?? "rule" },
@@ -226,7 +254,7 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   if (argv[0] !== "find") {
-    console.error(`Unknown command: "${argv[0]}". Only "find" is supported.\n`);
+    console.error(`Unknown command: "${stripControlChars(argv[0])}". Only "find" is supported.\n`);
     console.log(USAGE);
     return 1;
   }
@@ -236,7 +264,7 @@ export async function main(argv: string[]): Promise<number> {
     parsed = parseArgs(argv.slice(1));
   } catch (err) {
     if (err instanceof CliUsageError) {
-      console.error(`Error: ${err.message}\n`);
+      console.error(`Error: ${stripControlChars(err.message)}\n`);
       console.log(USAGE);
       return err.exitCode;
     }
@@ -248,6 +276,10 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  for (const warning of parsed.warnings) {
+    console.error(`Warning: ${stripControlChars(warning)}`);
+  }
+
   try {
     // The one line that matters: flags in, library call, nothing invented.
     const results = await findModels(parsed.query);
@@ -255,9 +287,13 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   } catch (err) {
     if (err instanceof SmallmError) {
-      console.error(`Error: ${err.message}`);
-    } else {
+      console.error(`Error: ${stripControlChars(err.message)}`);
+    } else if (process.env.SMALLM_DEBUG) {
       console.error("Unexpected error:", err);
+    } else {
+      // No stack trace by default — set SMALLM_DEBUG=1 for full details.
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Unexpected error: ${stripControlChars(message)} (set SMALLM_DEBUG=1 for details)`);
     }
     return 1;
   }

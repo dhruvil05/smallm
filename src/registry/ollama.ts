@@ -1,8 +1,24 @@
 import { RawModel } from "../types";
 import { Provider } from "./provider";
+import { isSafeModelId, isSafeString, sanitizeTags } from "../validate";
+import { readJsonWithLimit, ResponseTooLargeError } from "../http";
 
-/** Default local Ollama REST API address — this is Ollama's standard local port. */
-const OLLAMA_API_BASE = "http://localhost:11434";
+/**
+ * Default local Ollama REST API address — Ollama's standard port, on the
+ * explicit IPv4 loopback address Ollama binds by default. Not "localhost":
+ * that resolves to ::1 first on many systems, so any other local user who
+ * binds [::1]:11434 would answer instead of the real Ollama.
+ */
+const OLLAMA_API_BASE = "http://127.0.0.1:11434";
+
+/** Local service, so a short timeout: a process holding the port without answering must not hang the call. */
+export const OLLAMA_TIMEOUT_MS = 3_000;
+
+/** Cap on how many local models are considered — guards against an absurd response. */
+const MAX_OLLAMA_MODELS = 500;
+
+/** Hard cap on the decompressed /api/tags body (~1 KB per model). */
+const MAX_OLLAMA_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 /**
  * Raw shape of a single item from Ollama's GET /api/tags endpoint
@@ -30,7 +46,8 @@ interface OllamaTagsResponse {
  */
 function parseParamsB(parameterSize: string | undefined): number | null {
   if (!parameterSize) return null;
-  const match = parameterSize.match(/(\d+(?:\.\d+)?)\s*[bB]/);
+  // (?<!\d): only start at the beginning of a digit run, keeping this linear-time.
+  const match = parameterSize.match(/(?<!\d)(\d+(?:\.\d+)?)\s*[bB]/);
   if (!match) return null;
   const num = parseFloat(match[1]);
   return Number.isFinite(num) ? num : null;
@@ -54,7 +71,8 @@ function parseParamsB(parameterSize: string | undefined): number | null {
 async function listOllamaModels(): Promise<RawModel[]> {
   let response: Response;
   try {
-    response = await fetch(`${OLLAMA_API_BASE}/api/tags`);
+    // A local service never needs to redirect; refuse instead of following.
+    response = await fetch(`${OLLAMA_API_BASE}/api/tags`, { signal: AbortSignal.timeout(OLLAMA_TIMEOUT_MS), redirect: "error" });
   } catch {
     console.warn(
       `[smallm] Could not reach local Ollama at ${OLLAMA_API_BASE} — is Ollama running? Returning no Ollama candidates.`
@@ -69,15 +87,32 @@ async function listOllamaModels(): Promise<RawModel[]> {
     return [];
   }
 
-  let data: OllamaTagsResponse;
+  let data: Partial<OllamaTagsResponse> | null;
   try {
-    data = (await response.json()) as OllamaTagsResponse;
-  } catch {
-    console.warn("[smallm] Could not parse Ollama's response — returning no Ollama candidates.");
+    data = (await readJsonWithLimit(response, MAX_OLLAMA_RESPONSE_BYTES)) as Partial<OllamaTagsResponse> | null;
+  } catch (err) {
+    const reason = err instanceof ResponseTooLargeError ? "response too large" : "could not parse response";
+    console.warn(`[smallm] Local Ollama ${reason} — returning no Ollama candidates.`);
     return [];
   }
 
-  return (data.models ?? []).map((item): RawModel => ({
+  const models = data && typeof data === "object" ? data.models ?? [] : null;
+  if (!Array.isArray(models)) {
+    console.warn("[smallm] Unexpected Ollama response shape — returning no Ollama candidates.");
+    return [];
+  }
+
+  // Runtime shape check: drop entries without a safe string name; coerce the rest.
+  const valid = models
+    .filter((item): item is OllamaTagsItem => item !== null && typeof item === "object" && isSafeModelId(item.name))
+    .slice(0, MAX_OLLAMA_MODELS)
+    .map((item) => {
+      const details = item.details && typeof item.details === "object" ? item.details : {};
+      const parameterSize = isSafeString(details.parameter_size, 32) ? details.parameter_size : undefined;
+      return { name: item.name, families: sanitizeTags(details.families), parameterSize };
+    });
+
+  return valid.map((item): RawModel => ({
     id: item.name,
     provider: "ollama",
     // Ollama doesn't classify models by HF-style pipeline_tag — leaving
@@ -85,11 +120,11 @@ async function listOllamaModels(): Promise<RawModel[]> {
     // can't determine" and lets it through, same as any other missing
     // metadata (not a provider-specific special case).
     pipeline_tag: undefined,
-    tags: item.details?.families ?? [],
+    tags: item.families,
     // Ollama's local API doesn't expose a download-count concept.
     downloads: 0,
-    paramsB: parseParamsB(item.details?.parameter_size),
-    paramsSource: item.details?.parameter_size ? "tag" : "unknown",
+    paramsB: parseParamsB(item.parameterSize),
+    paramsSource: item.parameterSize ? "tag" : "unknown",
     // Ollama doesn't report context window via this endpoint either — same
     // known limitation already flagged for HuggingFace models elsewhere.
     contextWindow: null,

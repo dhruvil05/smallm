@@ -1,6 +1,6 @@
 import { ModelQuery, ModelMatch, ProviderName, RawModel } from "./types";
 import { validateQuery } from "./query";
-import { getOrFetchCached, configureCandidateModelsCache } from "./cache-file";
+import { getOrFetchCached } from "./cache-file";
 import { enrichWithParams } from "./params";
 import { applyHardFilters } from "./filters";
 import { computeFinalScore, generateReasonWhyForResult, compareModels } from "./scorer";
@@ -65,17 +65,18 @@ export async function findModels(query: ModelQuery): Promise<ModelMatch[]> {
   // 1. validate
   const validated = validateQuery(query);
 
-  // (v0.2) apply per-call cache options, if provided, before the fetch step.
-  if (validated.cacheOptions) {
-    configureCandidateModelsCache(validated.cacheOptions);
-  }
-
   // 2. fetch — (v0.4) fan out to every requested provider, cached per
   //    (provider, task) pair, then merge before anything downstream sees them.
+  //    Per-call cacheOptions select a cache scoped to this call only; they
+  //    no longer overwrite the module-level default for later calls.
   const providerLists = await Promise.all(
     validated.providers.map((providerName) => {
       const provider = PROVIDERS[providerName];
-      return getOrFetchCached(`${provider.name}:${validated.task}`, () => provider.listCandidates(validated));
+      return getOrFetchCached(
+        `${provider.name}:${validated.task}`,
+        () => provider.listCandidates(validated),
+        validated.cacheOptions
+      );
     })
   );
   const rawCandidates: RawModel[] = providerLists.flat();

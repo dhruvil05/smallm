@@ -5,7 +5,12 @@ import { HFModel, ParamsSource } from "./types";
  * Requires a digit immediately before the B/b, and no letter/digit right after,
  * so we don't accidentally match things like "Bert" or "B16".
  */
-const PARAM_REGEX = /(\d+(?:\.\d+)?)[\-_]?[bB](?![a-zA-Z0-9])/;
+//
+// The (?<!\d) lookbehind only lets a match start at the beginning of a digit
+// run. Without it the engine retries from every digit of a long run, which
+// is O(n²): a 50,000-digit tag took ~13 s. Results are identical — any match
+// starting mid-run also exists starting at the run's first digit.
+const PARAM_REGEX = /(?<!\d)(\d+(?:\.\d+)?)[-_]?[bB](?![a-zA-Z0-9])/;
 
 export interface ParamsExtractionResult {
   paramsB: number | null;
@@ -47,9 +52,17 @@ export function extractParamsB(model: HFModel): ParamsExtractionResult {
   return { paramsB: null, paramsSource: "unknown" };
 }
 
-/** Applies extraction to a full list, returning enriched copies (does not mutate input). */
+/**
+ * Applies extraction to a full list, returning enriched copies (does not mutate input).
+ * A size the provider already reported (e.g. Ollama's `parameter_size`) is kept:
+ * overwriting it from the id would turn "llama3:latest" (70B) into "unknown"
+ * and silently exempt it from the maxParamsB / vramGB hard filters.
+ */
 export function enrichWithParams(models: HFModel[]): HFModel[] {
   return models.map((model) => {
+    if (model.paramsB != null && model.paramsSource !== undefined && model.paramsSource !== "unknown") {
+      return { ...model };
+    }
     const { paramsB, paramsSource } = extractParamsB(model);
     return { ...model, paramsB, paramsSource };
   });

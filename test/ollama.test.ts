@@ -42,7 +42,7 @@ describe("ollamaProvider", () => {
 
     const results = await ollamaProvider.listCandidates({ task: "chat", contextLength: 2048 });
 
-    expect(global.fetch).toHaveBeenCalledWith("http://localhost:11434/api/tags");
+    expect(global.fetch).toHaveBeenCalledWith("http://127.0.0.1:11434/api/tags", expect.objectContaining({ signal: expect.anything() }));
     expect(results).toHaveLength(2);
     expect(results[0]).toMatchObject({
       id: "llama3:8b",
@@ -110,6 +110,6 @@ describe("ollamaProvider", () => {
     await ollamaProvider.listCandidates({ task: "chat", contextLength: 2048 });
 
     expect(global.fetch).toHaveBeenCalledTimes(1);
-    expect(global.fetch).toHaveBeenCalledWith("http://localhost:11434/api/tags");
+    expect(global.fetch).toHaveBeenCalledWith("http://127.0.0.1:11434/api/tags", expect.objectContaining({ signal: expect.anything() }));
   });
 });

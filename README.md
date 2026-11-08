@@ -10,6 +10,10 @@ Find the right small language model (SLM) for a task, based on given context.
 npm install smallm
 ```
 
+Requires Node.js 18 or newer.
+
+**Upgrading from 0.5?** v0.6.0 is a security release with a few breaking changes (no more imports from inside `dist/`, two stricter CLI flag checks, length limits on `task`/`domain`, a new default cache location). See [Upgrading from 0.5](./CHANGELOG.md#upgrading-from-05).
+
 ## Usage
 
 ```ts
@@ -53,7 +57,7 @@ await findModels({ task: "chat", contextLength: 4096, hardware: { type: "gpu", v
 await findModels({ task: "chat", contextLength: 4096, hardware: "gpu-low" }); // still works
 ```
 
-**Prerequisite for `providers: ["ollama"]`:** Ollama must be running locally (`ollama serve`, or the desktop app) and reachable at `http://localhost:11434`. If it isn't, `smallm` doesn't throw or crash the whole call — it logs a warning and simply returns no Ollama candidates, so a mixed `["huggingface", "ollama"]` query still returns your HuggingFace results.
+**Prerequisite for `providers: ["ollama"]`:** Ollama must be running locally (`ollama serve`, or the desktop app) and reachable at `http://127.0.0.1:11434` (IPv4 loopback, Ollama's default bind address). If it isn't, `smallm` doesn't throw or crash the whole call — it logs a warning and simply returns no Ollama candidates, so a mixed `["huggingface", "ollama"]` query still returns your HuggingFace results.
 
 **Important:** `HardwareSpec.vramGB` filtering uses an **estimated** footprint (~2GB VRAM per 1B params, a common fp16 rule of thumb) — not a measured or authoritative figure. It's meant to rule out obviously-too-large models, not to guarantee something fits.
 
@@ -92,7 +96,7 @@ await findModels({
 await findModels({ task: "chat", contextLength: 4096, hardware: "gpu-low" });
 ```
 
-**Ollama prerequisite:** `providers: ["ollama"]` (or including `"ollama"` in a multi-provider list) expects a local Ollama installation running at `http://localhost:11434`. If it's not running or not installed, `smallm` doesn't throw or crash the whole query — it logs a warning and simply contributes zero Ollama candidates, so a mixed `["huggingface", "ollama"]` query still returns HuggingFace results normally. Ollama itself is never installed, started, or asked to download models by this package — it only queries what's already available locally.
+**Ollama prerequisite:** `providers: ["ollama"]` (or including `"ollama"` in a multi-provider list) expects a local Ollama installation running at `http://127.0.0.1:11434`. If it's not running or not installed, `smallm` doesn't throw or crash the whole query — it logs a warning and simply contributes zero Ollama candidates, so a mixed `["huggingface", "ollama"]` query still returns HuggingFace results normally. Ollama itself is never installed, started, or asked to download models by this package — it only queries what's already available locally.
 
 **`vramGB` filtering is a heuristic, not a measured constraint.** There's no standard "how much VRAM does model X need" figure available from either provider's listing API, so `smallm` estimates it from `paramsB` using a commonly-cited rule of thumb (~2GB VRAM per 1B parameters, roughly fp16 inference). A model quantized to 4-bit would actually need much less — this estimate is conservative/pessimistic in that case. Treat `vramGB` filtering as a rough guide, not a guarantee.
 
@@ -124,16 +128,16 @@ The single public entry point. Validates the query, fetches live candidates from
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `task` | `"summarize" \| "classify" \| "extract" \| "chat" \| "code" \| "translate" \| string` | yes | |
+| `task` | `"summarize" \| "classify" \| "extract" \| "chat" \| "code" \| "translate" \| string` | yes | Max 512 characters |
 | `contextLength` | `number` | yes | Hard filter (tokens) |
 | `hardware` | `"cpu" \| "gpu-low" \| "gpu-high" \| { type: "cpu" \| "gpu"; vramGB?: number }` | no | String enum: required alongside `maxLatencyMs` to enforce latency filtering (v0.2). Object form (v0.4): `vramGB` enables the estimated-footprint hard filter. |
-| `domain` | `string` | no | Used in scoring, not filtering |
+| `domain` | `string` | no | Used in scoring, not filtering. Max 128 characters |
 | `maxParamsB` | `number` | no | Hard filter, e.g. `7` = "under 7B" |
 | `maxLatencyMs` | `number` | no | **v0.2:** real hard filter when a benchmark entry exists for the (model, string-enum `hardware`) pair. No entry = not enforced. |
 | `scoringMode` | `"rule" \| "embedding" \| "hybrid"` | no | **v0.3:** which scoring strategy to use. Defaults to `"rule"`. |
-| `providers` | `("huggingface" \| "ollama")[]` | no | **v0.4:** which registries to query. Defaults to `["huggingface"]`. |
+| `providers` | `("huggingface" \| "ollama")[]` | no | **v0.4:** which registries to query. Defaults to `["huggingface"]`. Duplicates are ignored. |
 | `limit` | `number` | no | Defaults to `5` |
-| `cacheOptions` | `{ dir?: string; ttlMs?: number }` | no | **v0.2:** configure the file-based cache. Defaults: OS temp dir + `/smallm-cache`, 5-minute TTL |
+| `cacheOptions` | `{ dir?: string; ttlMs?: number }` | no | **v0.2:** configure the file-based cache. Defaults: a per-user cache dir (`$XDG_CACHE_HOME/smallm`, `~/.cache/smallm`, `~/Library/Caches/smallm`, or `%LOCALAPPDATA%\smallm\cache`), 5-minute TTL. On Linux/macOS the dir must be owned by you and not world-writable. Windows UNC/network paths are rejected; ACLs of a custom Windows dir are not checked. TTLs above 7 days are clamped. If the default dir is unusable, an in-memory cache is used. Never pass untrusted input as `dir`. |
 
 ### `ModelMatch`
 
@@ -185,6 +189,8 @@ Unknown metadata (e.g. undetectable param count, no benchmark entry, unreachable
 - Ollama candidates never have a `pipeline_tag`, so the task hard filter always lets them through (same "unknown, don't exclude" rule as everywhere else) — task relevance for Ollama results relies entirely on scoring, not filtering.
 - Sub-billion-parameter models (e.g. `125M`) aren't detected by the size regex and report `paramsB: null`.
 - File-based cache only — no database engine. Cache entries are per-process-agnostic (survive restarts) but there's no cross-machine sharing.
+- **On Windows, a custom cache directory's permissions aren't checked** (Node has no ACL API). Don't point `cacheOptions.dir` / `--cache-dir` at a folder other users can write to; the default under `%LOCALAPPDATA%` is per-user. On Linux/macOS, unsafe directories are refused.
+- **Don't pass untrusted input as `cacheOptions`.** If you expose `findModels()` to end users (e.g. in a web service), build `cacheOptions` yourself rather than taking it from the request.
 
 ## CLI (v0.5, optional)
 

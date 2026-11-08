@@ -1,9 +1,16 @@
 {
   "name": "smallm",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Find the right small language model (SLM) for a task, based on given context. Live rule-based matching against the HuggingFace API.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "smallm": "dist/cli.js"
   },
@@ -13,11 +20,16 @@
   "directories": {
     "test": "test"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
+    "prebuild": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc",
     "postbuild": "node -e \"try { require('fs').chmodSync('dist/cli.js', 0o755); } catch (e) {}\"",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm test && npm run build"
   },
   "keywords": [
     "llm",
@@ -27,12 +39,19 @@
     "model-selection",
     "cli"
   ],
-  "author": "",
+  "author": "HongZiro",
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^26.2.0",
     "eslint": "^10.8.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dhruvil05/smallm"
+  },
+  "bugs": {
+    "url": "https://github.com/dhruvil05/smallm/issues"
   }
 }
