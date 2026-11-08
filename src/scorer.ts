@@ -45,7 +45,8 @@ function scoreSize(model: HFModel, maxParamsB: number | undefined): number {
 function scoreDomain(model: HFModel, domain: string | undefined): number {
   if (domain === undefined) return NEUTRAL_SCORE; // component not requested
   const tags = model.tags ?? [];
-  const found = tags.some((tag) => tag.toLowerCase() === domain.toLowerCase());
+  const wanted = domain.toLowerCase(); // once, not once per tag
+  const found = tags.some((tag) => tag.toLowerCase() === wanted);
   return found ? 100 : 0;
 }
 

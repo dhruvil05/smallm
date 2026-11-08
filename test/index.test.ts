@@ -236,7 +236,7 @@ describe("findModels (integration)", () => {
     const results = await findModels({ task: "chat", contextLength: 2048, providers: ["ollama"] });
     expect(results).toHaveLength(1);
     expect(results[0].provider).toBe("ollama");
-    expect(global.fetch).toHaveBeenCalledWith("http://localhost:11434/api/tags");
+    expect(global.fetch).toHaveBeenCalledWith("http://127.0.0.1:11434/api/tags", expect.objectContaining({ signal: expect.anything() }));
   });
 
   it("(v0.4) providers: ['huggingface', 'ollama'] fans out and merges candidates from both", async () => {

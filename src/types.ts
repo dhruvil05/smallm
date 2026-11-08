@@ -161,8 +161,16 @@ export interface BenchmarkEntry {
 
 /** Options for the v0.2 file-based cache. */
 export interface CacheOptions {
-  /** Default: OS temp dir + '/smallm-cache' */
+  /**
+   * Default: a per-user cache dir ($XDG_CACHE_HOME/smallm, ~/.cache/smallm,
+   * ~/Library/Caches/smallm, or %LOCALAPPDATA%\smallm\cache). Must be owned
+   * by the current user and not world-writable. Never pass untrusted input here.
+   * Windows UNC/network and device paths (\\server\share, \\?\, \\.\) are
+   * rejected. On Windows, ACLs of a custom directory are NOT checked (Node has
+   * no ACL API) — don't point this at a folder other users can write to.
+   * If the *default* directory is unusable, an in-memory cache is used instead.
+   */
   dir?: string;
-  /** Default: same TTL as MVP's in-memory cache (5 minutes). */
+  /** Default: same TTL as MVP's in-memory cache (5 minutes). Values above 7 days are clamped to 7 days. */
   ttlMs?: number;
 }
